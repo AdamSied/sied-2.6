@@ -1,0 +1,53 @@
+name: Build macOS installer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out SIED
+        uses: actions/checkout@v5
+
+      - name: Find SIED project
+        shell: bash
+        run: |
+          build_script="$(find . -maxdepth 4 -type f -path '*/scripts/build-macos.sh' -print -quit)"
+          if [[ -z "$build_script" ]]; then
+            echo "scripts/build-macos.sh is missing. Upload the complete extracted sied-vst folder." >&2
+            find . -maxdepth 3 -type f -print | sort
+            exit 1
+          fi
+          project_root="$(cd "$(dirname "$build_script")/.." && pwd)"
+          if [[ ! -f "$project_root/CMakeLists.txt" || ! -f "$project_root/scripts/build-installer-macos.sh" ]]; then
+            echo "The SIED source is incomplete at $project_root." >&2
+            exit 1
+          fi
+          echo "PROJECT_ROOT=$project_root" >> "$GITHUB_ENV"
+
+      - name: Build universal VST3, AU, and installer
+        run: |
+          cd "$PROJECT_ROOT"
+          chmod +x scripts/build-macos.sh scripts/build-installer-macos.sh
+          ./scripts/build-macos.sh --plugin-only-installer
+
+      - name: Verify both Mac architectures
+        run: |
+          cd "$PROJECT_ROOT"
+          lipo -archs build/SIED_artefacts/Release/VST3/SIED.vst3/Contents/MacOS/SIED
+          lipo -archs build/SIED_artefacts/Release/AU/SIED.component/Contents/MacOS/SIED
+          pkgutil --payload-files dist/SIED-2.6.0-macOS-Plugin.pkg >/dev/null
+
+      - name: Upload the Mac installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: SIED-2.6.0-macOS-Plugin
+          path: ${{ env.PROJECT_ROOT }}/dist/SIED-2.6.0-macOS-Plugin.pkg
+          if-no-files-found: error
+          compression-level: 0
